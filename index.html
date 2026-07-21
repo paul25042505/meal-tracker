@@ -101,7 +101,8 @@
       <datalist id="memberOptions"></datalist>
       <button class="secondary" style="margin-bottom:10px;" onclick="addShareRow()">＋ 新增成員金額</button>
       <div style="text-align:right;font-size:14px;margin-bottom:10px;">總金額：<b id="totalPreview">$0</b></div>
-      <button onclick="submitMeal()">儲存這筆訂餐</button>
+      <button id="submitBtn" onclick="submitMeal()">儲存這筆訂餐</button>
+      <button id="cancelEditBtn" class="secondary hidden" style="margin-top:8px;" onclick="cancelEdit()">取消編輯</button>
     </div>
   </div>
 
@@ -135,7 +136,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getFirestore, collection, addDoc, deleteDoc, doc,
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
   onSnapshot, query, orderBy, serverTimestamp, getDoc, setDoc
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -143,6 +144,7 @@ let app, db;
 let members = [];      // [{id?, name}] — stored simply as name strings in localStorage cache
 let meals = [];         // live from Firestore
 let settlements = [];   // live from Firestore — records of debts marked as repaid
+let editingMealId = null; // set while the add-meal form is editing an existing meal
 
 const $ = (id) => document.getElementById(id);
 
@@ -272,18 +274,54 @@ async function submitMeal(){
   const total = shares.reduce((s,x)=>s+x.amount,0);
 
   try{
-    await addDoc(collection(db,'meals'), {
-      date, note, payer, total, shares, createdAt: serverTimestamp()
-    });
-    toast('已儲存訂餐紀錄');
-    $('mealNote').value = '';
-    $('sharesList').innerHTML = '';
-    addShareRow(); addShareRow();
+    if(editingMealId){
+      await updateDoc(doc(db,'meals',editingMealId), { date, note, payer, total, shares });
+      toast('已更新訂餐紀錄');
+      cancelEdit();
+    }else{
+      await addDoc(collection(db,'meals'), {
+        date, note, payer, total, shares, createdAt: serverTimestamp()
+      });
+      toast('已儲存訂餐紀錄');
+      $('mealNote').value = '';
+      $('sharesList').innerHTML = '';
+      addShareRow(); addShareRow();
+    }
   }catch(e){
     alert('儲存失敗：'+e.message);
   }
 }
 window.submitMeal = submitMeal;
+
+function editMeal(id){
+  const meal = meals.find(m=>m.id===id);
+  if(!meal) return;
+  editingMealId = id;
+  if(meal.payer) addMemberIfNew(meal.payer);
+  (meal.shares||[]).forEach(s=>addMemberIfNew(s.name));
+  $('mealDate').value = meal.date || '';
+  $('mealNote').value = meal.note || '';
+  $('payerSelect').value = meal.payer || '';
+  $('sharesList').innerHTML = '';
+  (meal.shares||[]).forEach(s=>addShareRow(s.name, s.amount));
+  if((meal.shares||[]).length===0){ addShareRow(); addShareRow(); }
+  $('submitBtn').textContent = '更新這筆訂餐';
+  $('cancelEditBtn').classList.remove('hidden');
+  switchTab('add');
+  toast('編輯中：修改後按「更新這筆訂餐」');
+}
+window.editMeal = editMeal;
+
+function cancelEdit(){
+  editingMealId = null;
+  $('mealDate').value = new Date().toISOString().slice(0,10);
+  $('mealNote').value = '';
+  $('sharesList').innerHTML = '';
+  addShareRow(); addShareRow();
+  $('submitBtn').textContent = '儲存這筆訂餐';
+  $('cancelEditBtn').classList.add('hidden');
+}
+window.cancelEdit = cancelEdit;
 
 // ---------- Live meals + balance calc ----------
 function listenMeals(){
@@ -395,7 +433,10 @@ function renderHistory(){
     <div class="meal-item">
       <div class="meal-title">
         <span>${m.note || '（無備註）'} · $${m.total}</span>
-        <button class="del-btn" onclick="deleteMeal('${m.id}')">刪除</button>
+        <span>
+          <button class="del-btn" onclick="editMeal('${m.id}')">編輯</button>
+          <button class="del-btn" onclick="deleteMeal('${m.id}')">刪除</button>
+        </span>
       </div>
       <div class="meal-meta">${m.date || ''} · 代墊人：${m.payer}</div>
       <div class="meal-shares">
