@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>團體訂餐記帳</title>
+<style>
+  :root{
+    --bg:#f5f5f7; --card:#fff; --primary:#ff6b35; --primary-dark:#e0551f;
+    --text:#1d1d1f; --muted:#86868b; --border:#e5e5ea;
+    --pos:#2fa84f; --neg:#e0392b;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);}
+  header{background:var(--primary);color:#fff;padding:16px 20px;position:sticky;top:0;z-index:10;box-shadow:0 2px 6px rgba(0,0,0,.1);}
+  header h1{margin:0;font-size:18px;}
+  .container{max-width:640px;margin:0 auto;padding:16px;}
+  .tabs{display:flex;gap:8px;margin-bottom:16px;}
+  .tab{flex:1;text-align:center;padding:10px;border-radius:10px;background:var(--card);border:1px solid var(--border);cursor:pointer;font-size:14px;font-weight:600;color:var(--muted);}
+  .tab.active{background:var(--primary);color:#fff;border-color:var(--primary);}
+  .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+  .card h2{margin:0 0 12px;font-size:15px;}
+  input,select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font-size:15px;margin-bottom:10px;background:#fafafa;}
+  label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px;}
+  button{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:11px 16px;font-size:15px;font-weight:600;cursor:pointer;width:100%;}
+  button:active{background:var(--primary-dark);}
+  button.secondary{background:#efeff0;color:var(--text);}
+  button.small{width:auto;padding:6px 12px;font-size:13px;}
+  .row{display:flex;gap:8px;align-items:center;}
+  .share-item{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
+  .share-item input[type=number]{margin-bottom:0;}
+  .share-item .name{flex:1.4;}
+  .share-item .amt{flex:1;}
+  .balance-list .b-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);}
+  .balance-list .b-row:last-child{border-bottom:none;}
+  .amt-pos{color:var(--pos);font-weight:700;}
+  .amt-neg{color:var(--neg);font-weight:700;}
+  .amt-zero{color:var(--muted);font-weight:600;}
+  .meal-item{border-bottom:1px solid var(--border);padding:12px 0;}
+  .meal-item:last-child{border-bottom:none;}
+  .meal-title{font-weight:700;font-size:15px;display:flex;justify-content:space-between;}
+  .meal-meta{font-size:13px;color:var(--muted);margin-top:2px;}
+  .meal-shares{margin-top:8px;font-size:13px;}
+  .meal-shares span{display:inline-block;background:#f0f0f2;border-radius:8px;padding:3px 8px;margin:2px 4px 2px 0;}
+  .del-btn{color:var(--neg);background:none;border:none;font-size:13px;width:auto;padding:0;font-weight:600;}
+  .empty{color:var(--muted);text-align:center;padding:24px 0;font-size:14px;}
+  .settle-hint{font-size:13px;color:var(--muted);margin-top:6px;}
+  #configScreen{max-width:480px;margin:40px auto;padding:20px;}
+  #configScreen textarea{width:100%;height:120px;font-family:monospace;font-size:13px;padding:10px;border-radius:10px;border:1px solid var(--border);}
+  .hidden{display:none !important;}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 18px;border-radius:20px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:100;}
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+<div id="configScreen" class="hidden">
+  <h2>首次設定 — 貼上 Firebase 設定</h2>
+  <p style="font-size:13px;color:var(--muted)">到 Firebase 主控台 → 專案設定 → 你的應用程式，複製 firebaseConfig 物件貼在下面（只需做一次，之後會存在瀏覽器裡）。</p>
+  <textarea id="configInput" placeholder='{"apiKey":"...","authDomain":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}'></textarea>
+  <button onclick="saveConfig()" style="margin-top:10px;">儲存並啟動</button>
+</div>
+
+<div id="app">
+<header><h1>🍱 團體訂餐記帳</h1></header>
+<div class="container">
+  <div class="tabs">
+    <div class="tab active" data-tab="add" onclick="switchTab('add')">新增訂餐</div>
+    <div class="tab" data-tab="balance" onclick="switchTab('balance')">結算</div>
+    <div class="tab" data-tab="history" onclick="switchTab('history')">紀錄</div>
+  </div>
+
+  <!-- ADD -->
+  <div id="tab-add">
+    <div class="card">
+      <h2>本次訂餐</h2>
+      <label>日期</label>
+      <input type="date" id="mealDate">
+      <label>備註（例如：便當、飲料）</label>
+      <input type="text" id="mealNote" placeholder="例如：晚餐便當">
+      <label>誰先付錢（代墊人）</label>
+      <select id="payerSelect"></select>
+    </div>
+
+    <div class="card">
+      <h2>成員與金額</h2>
+      <div id="sharesList"></div>
+      <button class="secondary" style="margin-bottom:10px;" onclick="addShareRow()">＋ 新增成員金額</button>
+      <div class="row" style="margin-bottom:10px;">
+        <input type="text" id="newMemberName" placeholder="新成員姓名（可選，加入常用名單）">
+        <button class="small secondary" style="flex-shrink:0;" onclick="addNewMember()">加入名單</button>
+      </div>
+      <div style="text-align:right;font-size:14px;margin-bottom:10px;">總金額：<b id="totalPreview">$0</b></div>
+      <button onclick="submitMeal()">儲存這筆訂餐</button>
+    </div>
+  </div>
+
+  <!-- BALANCE -->
+  <div id="tab-balance" class="hidden">
+    <div class="card">
+      <h2>目前餘額（正值＝該收錢，負值＝該付錢）</h2>
+      <div id="balanceList" class="balance-list"><div class="empty">尚無資料</div></div>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div id="tab-history" class="hidden">
+    <div class="card">
+      <h2>訂餐紀錄</h2>
+      <div id="historyList"><div class="empty">尚無紀錄</div></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getFirestore, collection, addDoc, deleteDoc, doc,
+  onSnapshot, query, orderBy, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+let app, db;
+let members = [];      // [{id?, name}] — stored simply as name strings in localStorage cache
+let meals = [];         // live from Firestore
+
+const $ = (id) => document.getElementById(id);
+
+function toast(msg){
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+// ---------- Config bootstrap ----------
+function saveConfig(){
+  const raw = $('configInput').value.trim();
+  try{
+    const cfg = JSON.parse(raw);
+    localStorage.setItem('mealTrackerFirebaseConfig', JSON.stringify(cfg));
+    startApp(cfg);
+  }catch(e){
+    alert('JSON 格式錯誤，請確認貼上的是完整的 firebaseConfig 物件');
+  }
+}
+window.saveConfig = saveConfig;
+
+function startApp(cfg){
+  app = initializeApp(cfg);
+  db = getFirestore(app);
+  $('configScreen').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  $('mealDate').value = new Date().toISOString().slice(0,10);
+  loadMembers();
+  listenMeals();
+  addShareRow(); addShareRow();
+}
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDbc-2ALGa9nQ_5svtHf8R3nFUm1vdtLe4",
+  authDomain: "meal-tracker-633fd.firebaseapp.com",
+  projectId: "meal-tracker-633fd",
+  storageBucket: "meal-tracker-633fd.firebasestorage.app",
+  messagingSenderId: "394112675982",
+  appId: "1:394112675982:web:42c541c3e0037fec6319df"
+};
+startApp(firebaseConfig);
+
+// ---------- Members (cached locally, simple name list) ----------
+function loadMembers(){
+  const raw = localStorage.getItem('mealTrackerMembers');
+  members = raw ? JSON.parse(raw) : [];
+  refreshMemberUI();
+}
+function saveMembers(){
+  localStorage.setItem('mealTrackerMembers', JSON.stringify(members));
+}
+function addNewMember(){
+  const name = $('newMemberName').value.trim();
+  if(!name) return;
+  if(!members.includes(name)){
+    members.push(name);
+    saveMembers();
+    refreshMemberUI();
+    toast('已加入常用名單：'+name);
+  }
+  $('newMemberName').value = '';
+}
+window.addNewMember = addNewMember;
+
+function refreshMemberUI(){
+  const payerSelect = $('payerSelect');
+  payerSelect.innerHTML = members.map(m=>`<option value="${m}">${m}</option>`).join('') || '<option value="">（請先新增成員）</option>';
+  document.querySelectorAll('.share-item .name-input').forEach(sel=>{
+    const cur = sel.value;
+    sel.innerHTML = memberOptionsHtml(cur);
+  });
+}
+function memberOptionsHtml(selected){
+  let opts = '<option value="">選擇成員</option>';
+  opts += members.map(m=>`<option value="${m}" ${m===selected?'selected':''}>${m}</option>`).join('');
+  return opts;
+}
+
+// ---------- Share rows ----------
+function addShareRow(name='', amount=''){
+  const div = document.createElement('div');
+  div.className = 'share-item';
+  div.innerHTML = `
+    <select class="name-input">${memberOptionsHtml(name)}</select>
+    <input type="number" class="amt-input" placeholder="金額" value="${amount}" oninput="updateTotalPreview()">
+    <button class="del-btn" onclick="this.parentElement.remove(); updateTotalPreview();">刪除</button>
+  `;
+  $('sharesList').appendChild(div);
+  updateTotalPreview();
+}
+window.addShareRow = addShareRow;
+
+function updateTotalPreview(){
+  let total = 0;
+  document.querySelectorAll('.amt-input').forEach(i=>{ total += parseFloat(i.value)||0; });
+  $('totalPreview').textContent = '$' + total.toFixed(0);
+}
+window.updateTotalPreview = updateTotalPreview;
+
+// ---------- Submit meal ----------
+async function submitMeal(){
+  const date = $('mealDate').value;
+  const note = $('mealNote').value.trim();
+  const payer = $('payerSelect').value;
+  if(!payer){ alert('請選擇代墊人'); return; }
+
+  const shares = [];
+  document.querySelectorAll('.share-item').forEach(row=>{
+    const name = row.querySelector('.name-input').value;
+    const amt = parseFloat(row.querySelector('.amt-input').value);
+    if(name && amt>0) shares.push({name, amount: amt});
+  });
+  if(shares.length===0){ alert('請至少輸入一筆成員金額'); return; }
+
+  const total = shares.reduce((s,x)=>s+x.amount,0);
+
+  try{
+    await addDoc(collection(db,'meals'), {
+      date, note, payer, total, shares, createdAt: serverTimestamp()
+    });
+    toast('已儲存訂餐紀錄');
+    $('mealNote').value = '';
+    $('sharesList').innerHTML = '';
+    addShareRow(); addShareRow();
+  }catch(e){
+    alert('儲存失敗：'+e.message);
+  }
+}
+window.submitMeal = submitMeal;
+
+// ---------- Live meals + balance calc ----------
+function listenMeals(){
+  const q = query(collection(db,'meals'), orderBy('createdAt','desc'));
+  onSnapshot(q, (snap)=>{
+    meals = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderHistory();
+    renderBalance();
+  }, (err)=>{
+    toast('讀取失敗：'+err.message);
+  });
+}
+
+async function deleteMeal(id){
+  if(!confirm('確定要刪除這筆訂餐紀錄嗎？')) return;
+  await deleteDoc(doc(db,'meals',id));
+  toast('已刪除');
+}
+window.deleteMeal = deleteMeal;
+
+function renderHistory(){
+  const el = $('historyList');
+  if(meals.length===0){ el.innerHTML='<div class="empty">尚無紀錄</div>'; return; }
+  el.innerHTML = meals.map(m=>`
+    <div class="meal-item">
+      <div class="meal-title">
+        <span>${m.note || '（無備註）'} · $${m.total}</span>
+        <button class="del-btn" onclick="deleteMeal('${m.id}')">刪除</button>
+      </div>
+      <div class="meal-meta">${m.date || ''} · 代墊人：${m.payer}</div>
+      <div class="meal-shares">
+        ${(m.shares||[]).map(s=>`<span>${s.name} $${s.amount}</span>`).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderBalance(){
+  const balances = {}; // name -> net (positive = should receive money)
+  const pair = {};     // pair[a][b] = amount a owes b (raw, pre-netting)
+  const ensure = (n)=>{ if(!(n in balances)) balances[n]=0; };
+  const ensurePair = (a,b)=>{ if(!pair[a]) pair[a]={}; if(!(b in pair[a])) pair[a][b]=0; };
+
+  meals.forEach(m=>{
+    ensure(m.payer);
+    (m.shares||[]).forEach(s=>{
+      ensure(s.name);
+      if(s.name === m.payer) return; // payer's own share nets out
+      balances[s.name] -= s.amount;   // they owe this much
+      balances[m.payer] += s.amount;  // payer is owed this much
+      ensurePair(s.name, m.payer);
+      pair[s.name][m.payer] += s.amount;
+    });
+  });
+
+  // Net each pair down to a single direction (A owes B, or B owes A, not both)
+  const names = Object.keys(balances);
+  const netPairs = []; // {from, to, amount}
+  for(let i=0;i<names.length;i++){
+    for(let j=i+1;j<names.length;j++){
+      const a=names[i], b=names[j];
+      const aOwesB = (pair[a] && pair[a][b]) || 0;
+      const bOwesA = (pair[b] && pair[b][a]) || 0;
+      const net = aOwesB - bOwesA;
+      if(net > 0.5) netPairs.push({from:a, to:b, amount:net});
+      else if(net < -0.5) netPairs.push({from:b, to:a, amount:-net});
+    }
+  }
+
+  const el = $('balanceList');
+  if(names.length===0){ el.innerHTML='<div class="empty">尚無資料</div>'; return; }
+
+  const summaryHtml = names.sort((a,b)=>balances[b]-balances[a]).map(n=>{
+    const v = balances[n];
+    const cls = v>0.5?'amt-pos':(v<-0.5?'amt-neg':'amt-zero');
+    const label = v>0.5?`該收 $${v.toFixed(0)}`:(v<-0.5?`該付 $${Math.abs(v).toFixed(0)}`:'已結清');
+    return `<div class="b-row"><span>${n}</span><span class="${cls}">${label}</span></div>`;
+  }).join('');
+
+  let detailHtml;
+  if(netPairs.length===0){
+    detailHtml = '<div class="empty">目前沒有人欠錢</div>';
+  }else{
+    // group by debtor, list who they owe how much
+    const byDebtor = {};
+    netPairs.forEach(p=>{
+      if(!byDebtor[p.from]) byDebtor[p.from]=[];
+      byDebtor[p.from].push(p);
+    });
+    detailHtml = Object.keys(byDebtor).map(debtor=>`
+      <div class="b-row" style="display:block;">
+        <div style="font-weight:700;margin-bottom:4px;">${debtor}</div>
+        ${byDebtor[debtor].map(p=>`<div style="padding-left:12px;font-size:14px;color:var(--neg);">→ 欠 ${p.to} $${p.amount.toFixed(0)}</div>`).join('')}
+      </div>
+    `).join('');
+  }
+
+  el.innerHTML = `
+    <div style="font-size:13px;font-weight:700;color:var(--muted);margin-bottom:6px;">總覽（每人淨額）</div>
+    ${summaryHtml}
+    <div style="font-size:13px;font-weight:700;color:var(--muted);margin:16px 0 6px;">誰欠誰（已互相抵銷）</div>
+    ${detailHtml}
+  `;
+}
+
+// ---------- Tabs ----------
+window.switchTab = function(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  ['add','balance','history'].forEach(t=>{
+    $('tab-'+t).classList.toggle('hidden', t!==name);
+  });
+};
+</script>
+</body>
+</html>
