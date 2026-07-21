@@ -98,6 +98,7 @@
     <div class="card">
       <h2>成員與金額</h2>
       <div id="sharesList"></div>
+      <datalist id="memberOptions"></datalist>
       <button class="secondary" style="margin-bottom:10px;" onclick="addShareRow()">＋ 新增成員金額</button>
       <div style="text-align:right;font-size:14px;margin-bottom:10px;">總金額：<b id="totalPreview">$0</b></div>
       <button onclick="submitMeal()">儲存這筆訂餐</button>
@@ -216,36 +217,25 @@ window.addNewMember = addNewMember;
 function refreshMemberUI(){
   const payerSelect = $('payerSelect');
   payerSelect.innerHTML = members.map(m=>`<option value="${m}">${m}</option>`).join('') || '<option value="">（請先新增成員）</option>';
-  document.querySelectorAll('.share-item .name-input').forEach(sel=>{
-    const cur = sel.value;
-    sel.innerHTML = memberOptionsHtml(cur);
-  });
-}
-function memberOptionsHtml(selected){
-  let opts = '<option value="">選擇成員</option>';
-  opts += members.map(m=>`<option value="${m}" ${m===selected?'selected':''}>${m}</option>`).join('');
-  opts += '<option value="__new__">＋ 新增成員…</option>';
-  return opts;
+  $('memberOptions').innerHTML = members.map(m=>`<option value="${m}">`).join('');
 }
 
-// Share-row select shows an inline "+ 新增成員" option so a name can be
-// added straight from this row instead of scrolling back up to the payer card.
-function onShareNameChange(sel){
-  if(sel.value !== '__new__') return;
-  const input = prompt('請輸入新成員姓名：');
-  const name = (input||'').trim();
-  if(!name){ sel.value=''; return; }
+// Share-row name field is a free-text input (with a datalist for autocomplete
+// against the shared member list) so a name can always be typed directly here
+// instead of only being pickable from a dropdown.
+function onShareNameInput(inp){
+  const name = inp.value.trim();
+  if(!name) return;
   if(addMemberIfNew(name)) toast('已加入常用名單：'+name);
-  sel.value = name;
 }
-window.onShareNameChange = onShareNameChange;
+window.onShareNameInput = onShareNameInput;
 
 // ---------- Share rows ----------
 function addShareRow(name='', amount=''){
   const div = document.createElement('div');
   div.className = 'share-item';
   div.innerHTML = `
-    <select class="name-input" onchange="onShareNameChange(this)">${memberOptionsHtml(name)}</select>
+    <input type="text" class="name-input" list="memberOptions" placeholder="輸入或選擇成員" value="${name}" onchange="onShareNameInput(this)">
     <input type="number" class="amt-input" placeholder="金額" value="${amount}" oninput="updateTotalPreview()">
     <button class="del-btn" onclick="this.parentElement.remove(); updateTotalPreview();">刪除</button>
   `;
@@ -270,9 +260,12 @@ async function submitMeal(){
 
   const shares = [];
   document.querySelectorAll('.share-item').forEach(row=>{
-    const name = row.querySelector('.name-input').value;
+    const name = row.querySelector('.name-input').value.trim();
     const amt = parseFloat(row.querySelector('.amt-input').value);
-    if(name && amt>0) shares.push({name, amount: amt});
+    if(name && amt>0){
+      shares.push({name, amount: amt});
+      addMemberIfNew(name);
+    }
   });
   if(shares.length===0){ alert('請至少輸入一筆成員金額'); return; }
 
