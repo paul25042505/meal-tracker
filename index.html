@@ -25,7 +25,11 @@
     width:100%;
     min-width:0;
     box-sizing:border-box;
+    -webkit-appearance:none;
+    appearance:none;
   }
+  table{ table-layout: fixed; }
+  td{ overflow: hidden; }
   label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px;}
   button{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:11px 16px;font-size:15px;font-weight:600;cursor:pointer;width:100%;}
   button:active{background:var(--primary-dark);}
@@ -192,15 +196,18 @@ function loadMembers(){
 function saveMembers(){
   localStorage.setItem('mealTrackerMembers', JSON.stringify(members));
 }
+function addMemberIfNew(name){
+  if(members.includes(name)) return false;
+  members.push(name);
+  saveMembers();
+  refreshMemberUI();
+  return true;
+}
+
 function addNewMember(){
   const name = $('newMemberName').value.trim();
   if(!name) return;
-  if(!members.includes(name)){
-    members.push(name);
-    saveMembers();
-    refreshMemberUI();
-    toast('已加入常用名單：'+name);
-  }
+  if(addMemberIfNew(name)) toast('已加入常用名單：'+name);
   $('payerSelect').value = name;
   $('newMemberName').value = '';
 }
@@ -217,15 +224,28 @@ function refreshMemberUI(){
 function memberOptionsHtml(selected){
   let opts = '<option value="">選擇成員</option>';
   opts += members.map(m=>`<option value="${m}" ${m===selected?'selected':''}>${m}</option>`).join('');
+  opts += '<option value="__new__">＋ 新增成員…</option>';
   return opts;
 }
+
+// Share-row select shows an inline "+ 新增成員" option so a name can be
+// added straight from this row instead of scrolling back up to the payer card.
+function onShareNameChange(sel){
+  if(sel.value !== '__new__') return;
+  const input = prompt('請輸入新成員姓名：');
+  const name = (input||'').trim();
+  if(!name){ sel.value=''; return; }
+  if(addMemberIfNew(name)) toast('已加入常用名單：'+name);
+  sel.value = name;
+}
+window.onShareNameChange = onShareNameChange;
 
 // ---------- Share rows ----------
 function addShareRow(name='', amount=''){
   const div = document.createElement('div');
   div.className = 'share-item';
   div.innerHTML = `
-    <select class="name-input">${memberOptionsHtml(name)}</select>
+    <select class="name-input" onchange="onShareNameChange(this)">${memberOptionsHtml(name)}</select>
     <input type="number" class="amt-input" placeholder="金額" value="${amount}" oninput="updateTotalPreview()">
     <button class="del-btn" onclick="this.parentElement.remove(); updateTotalPreview();">刪除</button>
   `;
