@@ -21,6 +21,11 @@
   .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
   .card h2{margin:0 0 12px;font-size:15px;}
   input,select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font-size:15px;margin-bottom:10px;background:#fafafa;}
+  input[type="date"]{
+    width:100%;
+    min-width:0;
+    box-sizing:border-box;
+  }
   label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px;}
   button{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:11px 16px;font-size:15px;font-weight:600;cursor:pointer;width:100%;}
   button:active{background:var(--primary-dark);}
@@ -80,16 +85,16 @@
       <input type="text" id="mealNote" placeholder="例如：晚餐便當">
       <label>誰先付錢（代墊人）</label>
       <select id="payerSelect"></select>
+      <div class="row" style="margin-bottom:10px;">
+        <input type="text" id="newMemberName" placeholder="新成員姓名（可選，加入常用名單）">
+        <button class="small secondary" style="flex-shrink:0;" onclick="addNewMember()">加入名單</button>
+      </div>
     </div>
 
     <div class="card">
       <h2>成員與金額</h2>
       <div id="sharesList"></div>
       <button class="secondary" style="margin-bottom:10px;" onclick="addShareRow()">＋ 新增成員金額</button>
-      <div class="row" style="margin-bottom:10px;">
-        <input type="text" id="newMemberName" placeholder="新成員姓名（可選，加入常用名單）">
-        <button class="small secondary" style="flex-shrink:0;" onclick="addNewMember()">加入名單</button>
-      </div>
       <div style="text-align:right;font-size:14px;margin-bottom:10px;">總金額：<b id="totalPreview">$0</b></div>
       <button onclick="submitMeal()">儲存這筆訂餐</button>
     </div>
@@ -100,6 +105,13 @@
     <div class="card">
       <h2>目前餘額（正值＝該收錢，負值＝該付錢）</h2>
       <div id="balanceList" class="balance-list"><div class="empty">尚無資料</div></div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:12px;">
+        <h2 style="margin:0;">還款紀錄</h2>
+        <button class="small secondary" style="flex-shrink:0;width:auto;" onclick="changePin()">🔒 設定/變更確認碼</button>
+      </div>
+      <div id="settleHistoryList"><div class="empty">尚無還款紀錄</div></div>
     </div>
   </div>
 
@@ -119,12 +131,13 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getFirestore, collection, addDoc, deleteDoc, doc,
-  onSnapshot, query, orderBy, serverTimestamp
+  onSnapshot, query, orderBy, serverTimestamp, getDoc, setDoc
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 let app, db;
 let members = [];      // [{id?, name}] — stored simply as name strings in localStorage cache
 let meals = [];         // live from Firestore
+let settlements = [];   // live from Firestore — records of debts marked as repaid
 
 const $ = (id) => document.getElementById(id);
 
@@ -156,6 +169,7 @@ function startApp(cfg){
   $('mealDate').value = new Date().toISOString().slice(0,10);
   loadMembers();
   listenMeals();
+  listenSettlements();
   addShareRow(); addShareRow();
 }
 
@@ -187,6 +201,7 @@ function addNewMember(){
     refreshMemberUI();
     toast('已加入常用名單：'+name);
   }
+  $('payerSelect').value = name;
   $('newMemberName').value = '';
 }
 window.addNewMember = addNewMember;
@@ -276,6 +291,90 @@ async function deleteMeal(id){
 }
 window.deleteMeal = deleteMeal;
 
+// ---------- Settlements (mark as repaid) ----------
+function listenSettlements(){
+  const q = query(collection(db,'settlements'), orderBy('createdAt','desc'));
+  onSnapshot(q, (snap)=>{
+    settlements = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderSettleHistory();
+    renderBalance();
+  }, (err)=>{
+    toast('讀取還款紀錄失敗：'+err.message);
+  });
+}
+
+// PIN is stored in Firestore (shared by everyone), NOT localStorage —
+// otherwise each person's browser would just set its own PIN on first use
+// and the check would never actually stop anyone.
+async function checkPin(){
+  const ref = doc(db,'settings','settlePin');
+  const snap = await getDoc(ref);
+  const currentPin = snap.exists() ? snap.data().pin : '';
+  if(!currentPin){
+    const setup = prompt('尚未設定「還款確認碼」，請設定一組大家都知道的密碼（之後標記已還款／復原都需要輸入，避免有人亂按）：');
+    if(!setup) return false;
+    await setDoc(ref, { pin: setup });
+    toast('確認碼已設定，記得告訴其他人這組密碼');
+    return true;
+  }
+  const input = prompt('請輸入還款確認碼：');
+  if(input === null) return false;
+  if(input !== currentPin){ alert('確認碼錯誤，操作已取消'); return false; }
+  return true;
+}
+
+async function changePin(){
+  const ref = doc(db,'settings','settlePin');
+  const snap = await getDoc(ref);
+  const currentPin = snap.exists() ? snap.data().pin : '';
+  if(currentPin){
+    const input = prompt('請先輸入目前的確認碼：');
+    if(input === null) return;
+    if(input !== currentPin){ alert('確認碼錯誤'); return; }
+  }
+  const next = prompt('請輸入新的還款確認碼：');
+  if(!next) return;
+  await setDoc(ref, { pin: next });
+  toast('確認碼已更新，記得告訴其他人新密碼');
+}
+window.changePin = changePin;
+
+async function markRepaid(from, to, amount){
+  if(!(await checkPin())) return;
+  if(!confirm(`確定要標記「${from} 已還給 ${to} $${amount.toFixed(0)}」嗎？`)) return;
+  try{
+    await addDoc(collection(db,'settlements'), { from, to, amount, createdAt: serverTimestamp() });
+    toast('已標記為還款完成');
+  }catch(e){
+    alert('操作失敗：'+e.message);
+  }
+}
+function markRepaidFromBtn(btn){
+  markRepaid(btn.dataset.from, btn.dataset.to, parseFloat(btn.dataset.amount));
+}
+window.markRepaidFromBtn = markRepaidFromBtn;
+
+async function undoSettlement(id){
+  if(!(await checkPin())) return;
+  if(!confirm('確定要復原這筆還款紀錄嗎？（復原後會恢復欠款）')) return;
+  await deleteDoc(doc(db,'settlements',id));
+  toast('已復原');
+}
+window.undoSettlement = undoSettlement;
+
+function renderSettleHistory(){
+  const el = $('settleHistoryList');
+  if(settlements.length===0){ el.innerHTML='<div class="empty">尚無還款紀錄</div>'; return; }
+  el.innerHTML = settlements.map(s=>`
+    <div class="meal-item">
+      <div class="meal-title">
+        <span>${s.from} → ${s.to} $${s.amount}</span>
+        <button class="del-btn" onclick="undoSettlement('${s.id}')">復原</button>
+      </div>
+    </div>
+  `).join('');
+}
+
 function renderHistory(){
   const el = $('historyList');
   if(meals.length===0){ el.innerHTML='<div class="empty">尚無紀錄</div>'; return; }
@@ -309,6 +408,14 @@ function renderBalance(){
       ensurePair(s.name, m.payer);
       pair[s.name][m.payer] += s.amount;
     });
+  });
+
+  settlements.forEach(s=>{
+    ensure(s.from); ensure(s.to);
+    balances[s.from] += s.amount; // debtor already paid this back
+    balances[s.to] -= s.amount;   // creditor already received it
+    ensurePair(s.from, s.to);
+    pair[s.from][s.to] -= s.amount;
   });
 
   // Net each pair down to a single direction (A owes B, or B owes A, not both)
@@ -348,7 +455,12 @@ function renderBalance(){
     detailHtml = Object.keys(byDebtor).map(debtor=>`
       <div class="b-row" style="display:block;">
         <div style="font-weight:700;margin-bottom:4px;">${debtor}</div>
-        ${byDebtor[debtor].map(p=>`<div style="padding-left:12px;font-size:14px;color:var(--neg);">→ 欠 ${p.to} $${p.amount.toFixed(0)}</div>`).join('')}
+        ${byDebtor[debtor].map(p=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;padding-left:12px;gap:8px;">
+            <span style="font-size:14px;color:var(--neg);">→ 欠 ${p.to} $${p.amount.toFixed(0)}</span>
+            <button class="small secondary" style="flex-shrink:0;width:auto;" data-from="${debtor}" data-to="${p.to}" data-amount="${p.amount}" onclick="markRepaidFromBtn(this)">標記已還款</button>
+          </div>
+        `).join('')}
       </div>
     `).join('');
   }
