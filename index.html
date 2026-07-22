@@ -47,16 +47,32 @@
   .row{display:flex;gap:8px;align-items:center;}
   .share-item{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
   .share-item input[type=number]{margin-bottom:0;}
-  .share-item .name-input, .share-item .amt-input{
+  .share-item .amt-input{
     text-align:center;
-    text-align-last:center;
     height:44px;
     padding-top:0;
     padding-bottom:0;
     box-sizing:border-box;
   }
-  .share-item .name{flex:1.4;}
-  .share-item .amt{flex:1;}
+  /* iOS keeps its own vertical padding on native <select> no matter what
+     height/padding CSS says, so the real select is stretched invisibly over
+     a plain div that we fully control — guarantees the same height as
+     .amt-input regardless of native form-control quirks. */
+  .share-item .name-input-shell{position:relative;width:100%;height:44px;}
+  .share-item .name-input-shell select.name-input{
+    position:absolute;inset:0;width:100%;height:100%;
+    opacity:0;margin:0;padding:0;border:none;z-index:2;
+  }
+  .share-item .name-input-fake{
+    height:44px;padding:0 34px 0 12px;border:1px solid var(--border);border-radius:10px;
+    background:#fafafa;box-sizing:border-box;
+    display:flex;align-items:center;justify-content:center;
+    font-size:15px;color:var(--text);
+    background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%2386868b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>');
+    background-repeat:no-repeat;background-position:right 12px center;background-size:16px;
+    pointer-events:none;z-index:1;
+  }
+  .share-item .name-input-fake.placeholder{color:var(--muted);}
   .balance-list .b-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);}
   .balance-list .b-row:last-child{border-bottom:none;}
   .amt-pos{color:var(--pos);font-weight:700;}
@@ -238,6 +254,7 @@ function refreshMemberUI(){
   document.querySelectorAll('.share-item .name-input').forEach(sel=>{
     const cur = sel.value;
     sel.innerHTML = memberOptionsHtml(cur);
+    syncNameFake(sel);
   });
 }
 function memberOptionsHtml(selected){
@@ -247,15 +264,28 @@ function memberOptionsHtml(selected){
   return opts;
 }
 
+// The visible box next to each select is a plain div kept in sync with the
+// real (invisibly stretched) select, so its height is never at the mercy of
+// the native form control's own rendering.
+function syncNameFake(sel){
+  const fake = sel.nextElementSibling;
+  if(!fake) return;
+  const val = sel.value;
+  fake.textContent = val || '選擇成員';
+  fake.classList.toggle('placeholder', !val);
+}
+
 // Share-row select has an inline "+ 新增成員" option so a name can be
 // added straight from this row instead of scrolling back up to the payer card.
 function onShareNameChange(sel){
-  if(sel.value !== '__new__') return;
-  const input = prompt('請輸入新成員姓名：');
-  const name = (input||'').trim();
-  if(!name){ sel.value=''; return; }
-  if(addMemberIfNew(name)) toast('已加入常用名單：'+name);
-  sel.value = name;
+  if(sel.value === '__new__'){
+    const input = prompt('請輸入新成員姓名：');
+    const name = (input||'').trim();
+    if(!name){ sel.value=''; syncNameFake(sel); return; }
+    if(addMemberIfNew(name)) toast('已加入常用名單：'+name);
+    sel.value = name;
+  }
+  syncNameFake(sel);
 }
 window.onShareNameChange = onShareNameChange;
 
@@ -264,11 +294,15 @@ function addShareRow(name='', amount=''){
   const div = document.createElement('div');
   div.className = 'share-item';
   div.innerHTML = `
-    <select class="name-input" onchange="onShareNameChange(this)">${memberOptionsHtml(name)}</select>
+    <div class="name-input-shell">
+      <select class="name-input" onchange="onShareNameChange(this)">${memberOptionsHtml(name)}</select>
+      <div class="name-input-fake"></div>
+    </div>
     <input type="number" class="amt-input" placeholder="金額" value="${amount}" oninput="updateTotalPreview()">
     <button class="del-btn" onclick="this.parentElement.remove(); updateTotalPreview();">刪除</button>
   `;
   $('sharesList').appendChild(div);
+  syncNameFake(div.querySelector('.name-input'));
   updateTotalPreview();
 }
 window.addShareRow = addShareRow;
