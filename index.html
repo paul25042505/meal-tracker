@@ -47,7 +47,14 @@
   .row{display:flex;gap:8px;align-items:center;}
   .share-item{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
   .share-item input[type=number]{margin-bottom:0;}
-  .share-item .name-input, .share-item .amt-input{text-align:center;text-align-last:center;}
+  .share-item .name-input, .share-item .amt-input{
+    text-align:center;
+    text-align-last:center;
+    height:44px;
+    padding-top:0;
+    padding-bottom:0;
+    box-sizing:border-box;
+  }
   .share-item .name{flex:1.4;}
   .share-item .amt{flex:1;}
   .balance-list .b-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);}
